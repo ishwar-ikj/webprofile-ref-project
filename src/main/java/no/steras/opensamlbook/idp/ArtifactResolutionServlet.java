@@ -1,36 +1,33 @@
 package no.steras.opensamlbook.idp;
 
+import net.shibboleth.utilities.java.support.xml.BasicParserPool;
+import net.shibboleth.utilities.java.support.xml.XMLParserException;
 import no.steras.opensamlbook.OpenSAMLUtils;
 import no.steras.opensamlbook.sp.SPConstants;
 import no.steras.opensamlbook.sp.SPCredentials;
 import org.apache.xml.security.utils.EncryptionConstants;
 import org.joda.time.DateTime;
-import org.opensaml.common.SAMLObject;
-import org.opensaml.common.impl.SecureRandomIdentifierGenerator;
-import org.opensaml.saml2.core.*;
-import org.opensaml.saml2.encryption.Encrypter;
-import org.opensaml.saml2.metadata.provider.MetadataProviderException;
-import org.opensaml.security.SAMLSignatureProfileValidator;
-import org.opensaml.ws.soap.soap11.Body;
-import org.opensaml.ws.soap.soap11.Envelope;
-import org.opensaml.xml.Configuration;
-import org.opensaml.xml.XMLObject;
-import org.opensaml.xml.encryption.EncryptionException;
-import org.opensaml.xml.encryption.EncryptionParameters;
-import org.opensaml.xml.encryption.KeyEncryptionParameters;
-import org.opensaml.xml.io.*;
-import org.opensaml.xml.parse.BasicParserPool;
-import org.opensaml.xml.parse.XMLParserException;
-import org.opensaml.xml.schema.XSString;
-import org.opensaml.xml.schema.impl.XSStringBuilder;
-import org.opensaml.xml.security.keyinfo.KeyInfoGeneratorFactory;
-import org.opensaml.xml.signature.*;
-import org.opensaml.xml.validation.ValidationException;
+import org.opensaml.core.xml.XMLObject;
+import org.opensaml.core.xml.config.XMLObjectProviderRegistrySupport;
+import org.opensaml.core.xml.io.*;
+import org.opensaml.core.xml.schema.XSString;
+import org.opensaml.core.xml.schema.impl.XSStringBuilder;
+import org.opensaml.saml.common.SAMLObject;
+import org.opensaml.saml.saml2.core.*;
+import org.opensaml.saml.saml2.encryption.Encrypter;
+import org.opensaml.soap.soap11.Body;
+import org.opensaml.soap.soap11.Envelope;
+import org.opensaml.xmlsec.encryption.support.DataEncryptionParameters;
+import org.opensaml.xmlsec.encryption.support.EncryptionException;
+import org.opensaml.xmlsec.encryption.support.KeyEncryptionParameters;
+import org.opensaml.xmlsec.signature.Signature;
+import org.opensaml.xmlsec.signature.support.SignatureConstants;
+import org.opensaml.xmlsec.signature.support.SignatureException;
+import org.opensaml.xmlsec.signature.support.Signer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
-import org.xml.sax.SAXException;
 
 import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
@@ -48,10 +45,6 @@ import javax.xml.transform.stream.StreamResult;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.PrintWriter;
-import java.io.Writer;
-import java.security.NoSuchAlgorithmException;
-import java.security.NoSuchProviderException;
-import java.security.spec.ECField;
 
 /**
  * Created by Privat on 4/6/14.
@@ -76,7 +69,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
 
             Element soapRoot = soap.getDocumentElement();
 
-            UnmarshallerFactory unmarshallerFactory = Configuration.getUnmarshallerFactory();
+            UnmarshallerFactory unmarshallerFactory = XMLObjectProviderRegistrySupport.getUnmarshallerFactory();
             Unmarshaller unmarshaller = unmarshallerFactory.getUnmarshaller(soapRoot);
 
             Envelope soapEnvelope = (Envelope)unmarshaller.unmarshall(soapRoot);
@@ -93,7 +86,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
     public static org.w3c.dom.Element marshallSAMLObject(final SAMLObject object) {
         org.w3c.dom.Element element = null;
         try {
-            MarshallerFactory unMarshallerFactory = Configuration.getMarshallerFactory();
+            MarshallerFactory unMarshallerFactory = XMLObjectProviderRegistrySupport.getMarshallerFactory();
 
             Marshaller marshaller = unMarshallerFactory.getMarshaller(object);
 
@@ -121,7 +114,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
 
         Status status = OpenSAMLUtils.buildSAMLObject(Status.class);
         StatusCode statusCode = OpenSAMLUtils.buildSAMLObject(StatusCode.class);
-        statusCode.setValue(StatusCode.SUCCESS_URI);
+        statusCode.setValue(StatusCode.SUCCESS);
         status.setStatusCode(statusCode);
         artifactResponse.setStatus(status);
 
@@ -136,7 +129,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
 
         Status status2 = OpenSAMLUtils.buildSAMLObject(Status.class);
         StatusCode statusCode2 = OpenSAMLUtils.buildSAMLObject(StatusCode.class);
-        statusCode2.setValue(StatusCode.SUCCESS_URI);
+        statusCode2.setValue(StatusCode.SUCCESS);
         status2.setStatusCode(statusCode2);
 
         response.setStatus(status2);
@@ -153,14 +146,14 @@ public class ArtifactResolutionServlet extends HttpServlet {
     }
 
     private EncryptedAssertion encryptAssertion(Assertion assertion) {
-        EncryptionParameters encryptionParameters = new EncryptionParameters();
-        encryptionParameters.setAlgorithm(EncryptionConstants.ALGO_ID_BLOCKCIPHER_AES128);
+        DataEncryptionParameters dataEncryptionParameters = new DataEncryptionParameters();
+        dataEncryptionParameters.setAlgorithm(EncryptionConstants.ALGO_ID_BLOCKCIPHER_AES128);
 
         KeyEncryptionParameters keyEncryptionParameters = new KeyEncryptionParameters();
         keyEncryptionParameters.setEncryptionCredential(SPCredentials.getCredential());
         keyEncryptionParameters.setAlgorithm(EncryptionConstants.ALGO_ID_KEYTRANSPORT_RSAOAEP);
 
-        Encrypter encrypter = new Encrypter(encryptionParameters, keyEncryptionParameters);
+        Encrypter encrypter = new Encrypter(dataEncryptionParameters, keyEncryptionParameters);
         encrypter.setKeyPlacement(Encrypter.KeyPlacement.INLINE);
 
         try {
@@ -180,7 +173,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
         assertion.setSignature(signature);
 
         try {
-            Configuration.getMarshallerFactory().getMarshaller(assertion).marshall(assertion);
+            XMLObjectProviderRegistrySupport.getMarshallerFactory().getMarshaller(assertion).marshall(assertion);
         } catch (MarshallingException e) {
             throw new RuntimeException(e);
         }
@@ -270,7 +263,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
 
         Attribute attributeUserName = OpenSAMLUtils.buildSAMLObject(Attribute.class);
 
-        XSStringBuilder stringBuilder = (XSStringBuilder)Configuration.getBuilderFactory().getBuilder(XSString.TYPE_NAME);
+        XSStringBuilder stringBuilder = (XSStringBuilder)XMLObjectProviderRegistrySupport.getBuilderFactory().getBuilder(XSString.TYPE_NAME);
         XSString userNameValue = stringBuilder.buildObject(AttributeValue.DEFAULT_ELEMENT_NAME, XSString.TYPE_NAME);
         userNameValue.setValue("bob");
 
@@ -311,7 +304,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
             builder = factory.newDocumentBuilder();
 
             org.w3c.dom.Document document = builder.newDocument();
-            Marshaller out = Configuration.getMarshallerFactory().getMarshaller(object);
+            Marshaller out = XMLObjectProviderRegistrySupport.getMarshallerFactory().getMarshaller(object);
             out.marshall(object, document);
 
             Transformer transformer = TransformerFactory.newInstance().newTransformer();

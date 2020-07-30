@@ -1,20 +1,22 @@
 package no.steras.opensamlbook.sp;
 
+import net.shibboleth.utilities.java.support.component.ComponentInitializationException;
 import no.steras.opensamlbook.OpenSAMLUtils;
 import no.steras.opensamlbook.idp.IDPConstants;
 import org.joda.time.DateTime;
-import org.opensaml.Configuration;
-import org.opensaml.DefaultBootstrap;
-import org.opensaml.common.SAMLObject;
-import org.opensaml.common.binding.BasicSAMLMessageContext;
-import org.opensaml.common.xml.SAMLConstants;
-import org.opensaml.saml2.binding.encoding.HTTPRedirectDeflateEncoder;
-import org.opensaml.saml2.core.*;
-import org.opensaml.saml2.metadata.Endpoint;
-import org.opensaml.saml2.metadata.SingleSignOnService;
-import org.opensaml.ws.message.encoder.MessageEncodingException;
-import org.opensaml.ws.transport.http.HttpServletResponseAdapter;
-import org.opensaml.xml.ConfigurationException;
+import org.opensaml.core.config.InitializationException;
+import org.opensaml.core.config.InitializationService;
+import org.opensaml.core.xml.config.XMLObjectProviderInitializer;
+import org.opensaml.messaging.context.MessageContext;
+import org.opensaml.messaging.encoder.MessageEncodingException;
+import org.opensaml.saml.common.SAMLObject;
+import org.opensaml.saml.common.messaging.context.SAMLEndpointContext;
+import org.opensaml.saml.common.messaging.context.SAMLPeerEntityContext;
+import org.opensaml.saml.common.xml.SAMLConstants;
+import org.opensaml.saml.saml2.binding.encoding.impl.HTTPRedirectDeflateEncoder;
+import org.opensaml.saml.saml2.core.*;
+import org.opensaml.saml.saml2.metadata.Endpoint;
+import org.opensaml.saml.saml2.metadata.SingleSignOnService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -33,17 +35,15 @@ public class AccessFilter implements Filter {
 
     @Override
     public void init(FilterConfig filterConfig) throws ServletException {
-        Configuration.validateJCEProviders();
-        Configuration.validateNonSunJAXP();
-        
         for (Provider jceProvider : Security.getProviders()) {
             logger.info(jceProvider.getInfo());
         }
 
         try {
             logger.info("Bootstrapping");
-            DefaultBootstrap.bootstrap();
-        } catch (ConfigurationException e) {
+            InitializationService.initialize();
+            new XMLObjectProviderInitializer().init();
+        } catch (InitializationException e) {
             throw new RuntimeException("Bootstrapping failed");
         }
     }
@@ -72,21 +72,32 @@ public class AccessFilter implements Filter {
     }
 
     private void redirectUserWithRequest(HttpServletResponse httpServletResponse, AuthnRequest authnRequest) {
-        HttpServletResponseAdapter responseAdapter = new HttpServletResponseAdapter(httpServletResponse, true);
-        BasicSAMLMessageContext<SAMLObject, AuthnRequest, SAMLObject> context = new BasicSAMLMessageContext<SAMLObject, AuthnRequest, SAMLObject>();
-        context.setPeerEntityEndpoint(getIPDEndpoint());
-        context.setOutboundSAMLMessage(authnRequest);
-        context.setOutboundMessageTransport(responseAdapter);
-        context.setOutboundSAMLMessageSigningCredential(SPCredentials.getCredential());
-
-        HTTPRedirectDeflateEncoder encoder = new HTTPRedirectDeflateEncoder();
         logger.info("AuthnRequest: ");
         OpenSAMLUtils.logSAMLObject(authnRequest);
-
         logger.info("Redirecting to IDP");
+
+        // No response adapters needed anymore; the response now gets set directly on the encoder
+        httpServletResponse.setStatus(HttpServletResponse.SC_MOVED_TEMPORARILY);
+
+        // check your makeSamlMessageContext() method to see if any other properties on messageContext need to be set here
+        MessageContext<SAMLObject> messageContext = new MessageContext<SAMLObject>();
+        messageContext.setMessage(authnRequest);
+
+        // Endpoint is now set via subcontexts
+        SAMLPeerEntityContext peerEntityContext = messageContext.getSubcontext(SAMLPeerEntityContext.class, true);
+        SAMLEndpointContext endpointContext = peerEntityContext.getSubcontext(SAMLEndpointContext.class, true);
+        endpointContext.setEndpoint(getIPDEndpoint());
+
+        // MessageContext and HttpServletResponse now get set directly on the encoder
+        HTTPRedirectDeflateEncoder httpRedirectDeflateEncoder = new HTTPRedirectDeflateEncoder();
+        httpRedirectDeflateEncoder.setMessageContext(messageContext);
+        httpRedirectDeflateEncoder.setHttpServletResponse(httpServletResponse);
         try {
-            encoder.encode(context);
+            httpRedirectDeflateEncoder.initialize();
+            httpRedirectDeflateEncoder.encode();
         } catch (MessageEncodingException e) {
+            throw new RuntimeException(e);
+        } catch (ComponentInitializationException e) {
             throw new RuntimeException(e);
         }
     }

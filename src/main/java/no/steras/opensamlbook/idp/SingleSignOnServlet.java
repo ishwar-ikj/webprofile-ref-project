@@ -1,6 +1,5 @@
 package no.steras.opensamlbook.idp;
 
-import no.steras.opensamlbook.OpenSAMLUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
