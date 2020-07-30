@@ -1,8 +1,5 @@
 package no.steras.opensamlbook.sp;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 /**
  * Created by Privat on 4/7/14.
  */

@@ -1,28 +1,31 @@
 package no.steras.opensamlbook.sp;
 
+import net.shibboleth.utilities.java.support.xml.BasicParserPool;
 import no.steras.opensamlbook.OpenSAMLUtils;
 import no.steras.opensamlbook.idp.IDPConstants;
 import no.steras.opensamlbook.idp.IDPCredentials;
+import org.apache.http.impl.client.HttpClientBuilder;
 import org.joda.time.DateTime;
-import org.opensaml.saml2.core.*;
-import org.opensaml.saml2.encryption.Decrypter;
-import org.opensaml.security.SAMLSignatureProfileValidator;
-import org.opensaml.ws.soap.client.BasicSOAPMessageContext;
-import org.opensaml.ws.soap.client.http.HttpClientBuilder;
-import org.opensaml.ws.soap.client.http.HttpSOAPClient;
-import org.opensaml.ws.soap.common.SOAPException;
-import org.opensaml.ws.soap.soap11.Envelope;
-import org.opensaml.xml.Configuration;
-import org.opensaml.xml.XMLObject;
-import org.opensaml.xml.encryption.DecryptionException;
-import org.opensaml.xml.encryption.InlineEncryptedKeyResolver;
-import org.opensaml.xml.io.MarshallingException;
-import org.opensaml.xml.parse.BasicParserPool;
-import org.opensaml.xml.schema.XSString;
-import org.opensaml.xml.security.SecurityException;
-import org.opensaml.xml.security.keyinfo.StaticKeyInfoCredentialResolver;
-import org.opensaml.xml.signature.*;
-import org.opensaml.xml.validation.ValidationException;
+import org.opensaml.core.xml.XMLObject;
+import org.opensaml.core.xml.config.XMLObjectProviderRegistrySupport;
+import org.opensaml.core.xml.io.MarshallingException;
+import org.opensaml.core.xml.schema.XSString;
+import org.opensaml.messaging.context.MessageContext;
+import org.opensaml.profile.context.ProfileRequestContext;
+import org.opensaml.saml.saml2.core.*;
+import org.opensaml.saml.saml2.encryption.Decrypter;
+import org.opensaml.saml.security.impl.SAMLSignatureProfileValidator;
+import org.opensaml.soap.client.http.HttpSOAPClient;
+import org.opensaml.soap.messaging.context.SOAP11Context;
+import org.opensaml.soap.soap11.Envelope;
+import org.opensaml.xmlsec.encryption.support.DecryptionException;
+import org.opensaml.xmlsec.encryption.support.InlineEncryptedKeyResolver;
+import org.opensaml.xmlsec.keyinfo.impl.StaticKeyInfoCredentialResolver;
+import org.opensaml.xmlsec.signature.Signature;
+import org.opensaml.xmlsec.signature.support.SignatureConstants;
+import org.opensaml.xmlsec.signature.support.SignatureException;
+import org.opensaml.xmlsec.signature.support.SignatureValidator;
+import org.opensaml.xmlsec.signature.support.Signer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,7 +42,7 @@ public class ConsumerServlet extends HttpServlet {
     private static Logger logger = LoggerFactory.getLogger(ConsumerServlet.class);
 
     @Override
-    protected void doGet(final HttpServletRequest req, final HttpServletResponse resp) throws ServletException, IOException {
+    protected void doGet(final HttpServletRequest req, final HttpServletResponse resp) {
         logger.info("Artifact received");
         Artifact artifact = buildArtifactFromRequest(req);
         logger.info("Artifact: " + artifact.getArtifact());
@@ -91,12 +94,10 @@ public class ConsumerServlet extends HttpServlet {
             SAMLSignatureProfileValidator profileValidator = new SAMLSignatureProfileValidator();
             profileValidator.validate(assertion.getSignature());
 
-            SignatureValidator sigValidator = new SignatureValidator(IDPCredentials.getCredential());
-
-            sigValidator.validate(assertion.getSignature());
+            SignatureValidator.validate(assertion.getSignature(), IDPCredentials.getCredential());
 
             logger.info("SAML Assertion signature verified");
-        } catch (ValidationException e) {
+        } catch (SignatureException e) {
             throw new RuntimeException(e);
         }
 
@@ -111,7 +112,7 @@ public class ConsumerServlet extends HttpServlet {
         artifactResolve.setSignature(signature);
 
         try {
-            Configuration.getMarshallerFactory().getMarshaller(artifactResolve).marshall(artifactResolve);
+            XMLObjectProviderRegistrySupport.getMarshallerFactory().getMarshaller(artifactResolve).marshall(artifactResolve);
         } catch (MarshallingException e) {
             throw new RuntimeException(e);
         }
@@ -164,21 +165,35 @@ public class ConsumerServlet extends HttpServlet {
         try {
             Envelope envelope = OpenSAMLUtils.wrapInSOAPEnvelope(artifactResolve);
 
-            HttpClientBuilder clientBuilder = new HttpClientBuilder();
-            HttpSOAPClient soapClient = new HttpSOAPClient(clientBuilder.buildClient(), new BasicParserPool());
+            // build the soap client
+            BasicParserPool basicParserPool = new BasicParserPool();
+            basicParserPool.initialize();
+            HttpSOAPClient soapClient = new HttpSOAPClient();
+            soapClient.setParserPool(basicParserPool);
+            soapClient.setHttpClient(HttpClientBuilder.create().build());
 
-            BasicSOAPMessageContext soapContext = new BasicSOAPMessageContext();
-            soapContext.setOutboundMessage(envelope);
+            // Build the outbound context
+            SOAP11Context soap11Context = new SOAP11Context();
+            soap11Context.setEnvelope(envelope);
+            MessageContext<XMLObject> messageContext = new MessageContext<XMLObject>();
+            messageContext.addSubcontext(soap11Context);
+            ProfileRequestContext<XMLObject, XMLObject> profileRequestContext = new ProfileRequestContext<XMLObject, XMLObject>();
+            profileRequestContext.setOutboundMessageContext(messageContext);
 
-            soapClient.send(IDPConstants.ARTIFACT_RESOLUTION_SERVICE, soapContext);
+            // Call IDP
+            soapClient.send(IDPConstants.ARTIFACT_RESOLUTION_SERVICE, profileRequestContext);
 
-            Envelope soapResponse = (Envelope)soapContext.getInboundMessage();
+            // Parse the response
+            MessageContext<XMLObject> inboundContext = profileRequestContext.getInboundMessageContext();
+            if (inboundContext == null || inboundContext.getSubcontext(SOAP11Context.class, false) == null) {
+                throw new Exception("null response from IDP resolution request");
+            }
+            Envelope soapResponse = inboundContext.getSubcontext(SOAP11Context.class, false).getEnvelope();
+            if (soapResponse == null || soapResponse.getBody() == null || soapResponse.getBody().getUnknownXMLObjects().size() == 0) {
+                throw new Exception("null response from IDP resolution request");
+            }
             return (ArtifactResponse)soapResponse.getBody().getUnknownXMLObjects().get(0);
-        } catch (IllegalAccessException e) {
-            throw new RuntimeException(e);
-        } catch (SecurityException e) {
-            throw new RuntimeException(e);
-        } catch (SOAPException e) {
+        } catch (Exception e) {
             throw new RuntimeException(e);
         }
     }
