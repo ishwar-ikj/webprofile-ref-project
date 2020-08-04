@@ -1,5 +1,6 @@
 package no.steras.opensamlbook.idp;
 
+import net.shibboleth.utilities.java.support.component.ComponentInitializationException;
 import net.shibboleth.utilities.java.support.xml.BasicParserPool;
 import net.shibboleth.utilities.java.support.xml.XMLParserException;
 import no.steras.opensamlbook.OpenSAMLUtils;
@@ -60,10 +61,11 @@ public class ArtifactResolutionServlet extends HttpServlet {
         printSAMLObject(wrapInSOAPEnvelope(artifactResponse), resp.getWriter());
     }
 
-    public static ArtifactResolve unmarshallArtifactResolve(final InputStream input) {
+    public static Response unmarshallArtifactResolve(final InputStream input) {
         try {
             BasicParserPool ppMgr = new BasicParserPool();
             ppMgr.setNamespaceAware(true);
+            ppMgr.initialize();
 
             Document soap = ppMgr.parse(input);
 
@@ -72,12 +74,8 @@ public class ArtifactResolutionServlet extends HttpServlet {
             UnmarshallerFactory unmarshallerFactory = XMLObjectProviderRegistrySupport.getUnmarshallerFactory();
             Unmarshaller unmarshaller = unmarshallerFactory.getUnmarshaller(soapRoot);
 
-            Envelope soapEnvelope = (Envelope)unmarshaller.unmarshall(soapRoot);
-
-            return (ArtifactResolve)soapEnvelope.getBody().getUnknownXMLObjects().get(0);
-        } catch (XMLParserException e) {
-            throw new RuntimeException(e);
-        } catch (UnmarshallingException e) {
+            return (Response)unmarshaller.unmarshall(soapRoot);
+        } catch (UnmarshallingException | ComponentInitializationException | XMLParserException e) {
             throw new RuntimeException(e);
         }
 
@@ -100,7 +98,7 @@ public class ArtifactResolutionServlet extends HttpServlet {
         return element;
     }
 
-    private ArtifactResponse buildArtifactResponse() {
+    public ArtifactResponse buildArtifactResponse() {
 
         ArtifactResponse artifactResponse = OpenSAMLUtils.buildSAMLObject(ArtifactResponse.class);
 
@@ -139,9 +137,8 @@ public class ArtifactResolutionServlet extends HttpServlet {
         Assertion assertion = buildAssertion();
 
         signAssertion(assertion);
-        EncryptedAssertion encryptedAssertion = encryptAssertion(assertion);
 
-        response.getEncryptedAssertions().add(encryptedAssertion);
+        response.getAssertions().add(assertion);
         return artifactResponse;
     }
 

@@ -106,7 +106,7 @@ public class AccessFilter implements Filter {
         AuthnRequest authnRequest = OpenSAMLUtils.buildSAMLObject(AuthnRequest.class);
         authnRequest.setIssueInstant(new DateTime());
         authnRequest.setDestination(getIDPSSODestination());
-        authnRequest.setProtocolBinding(SAMLConstants.SAML2_ARTIFACT_BINDING_URI);
+        authnRequest.setProtocolBinding(SAMLConstants.SAML2_POST_BINDING_URI);
         authnRequest.setAssertionConsumerServiceURL(getAssertionConsumerEndpoint());
         authnRequest.setID(OpenSAMLUtils.generateSecureRandomId());
         authnRequest.setIssuer(buildIssuer());

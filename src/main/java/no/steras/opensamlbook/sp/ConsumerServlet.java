@@ -1,10 +1,14 @@
 package no.steras.opensamlbook.sp;
 
+import com.google.common.io.CharStreams;
 import net.shibboleth.utilities.java.support.xml.BasicParserPool;
 import no.steras.opensamlbook.OpenSAMLUtils;
+import no.steras.opensamlbook.Utils;
+import no.steras.opensamlbook.idp.ArtifactResolutionServlet;
 import no.steras.opensamlbook.idp.IDPConstants;
 import no.steras.opensamlbook.idp.IDPCredentials;
 import org.apache.http.impl.client.HttpClientBuilder;
+import org.bouncycastle.util.encoders.Base64;
 import org.joda.time.DateTime;
 import org.opensaml.core.xml.XMLObject;
 import org.opensaml.core.xml.config.XMLObjectProviderRegistrySupport;
@@ -29,11 +33,14 @@ import org.opensaml.xmlsec.signature.support.Signer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.net.URLDecoder;
 
 /**
  * Created by Privat on 4/6/14.
@@ -42,25 +49,25 @@ public class ConsumerServlet extends HttpServlet {
     private static Logger logger = LoggerFactory.getLogger(ConsumerServlet.class);
 
     @Override
-    protected void doGet(final HttpServletRequest req, final HttpServletResponse resp) {
-        logger.info("Artifact received");
-        Artifact artifact = buildArtifactFromRequest(req);
-        logger.info("Artifact: " + artifact.getArtifact());
+    protected void doPost(final HttpServletRequest req, final HttpServletResponse resp) throws IOException {
+        String text = null;
+        Reader reader = new InputStreamReader(req.getInputStream());
+        text = URLDecoder.decode(CharStreams.toString(reader), "UTF-8");
+        String samlResponse = Utils.getSamlResponseFromForm(text);
+        if (samlResponse == null) {
+            throw new RuntimeException("IDP response doesn't contain SAML Response");
+        }
 
-        ArtifactResolve artifactResolve = buildArtifactResolve(artifact);
-        signArtifactResolve(artifactResolve);
-        logger.info("Sending ArtifactResolve");
-        logger.info("ArtifactResolve: ");
-        OpenSAMLUtils.logSAMLObject(artifactResolve);
+        samlResponse = new String(Base64.decode(samlResponse));
+        logger.info("trying to unmarshall the artifactResponse string");
+        logger.info(samlResponse);
 
-        ArtifactResponse artifactResponse = sendAndReceiveArtifactResolve(artifactResolve);
+        Response response = ArtifactResolutionServlet.unmarshallArtifactResolve(new ByteArrayInputStream(samlResponse.getBytes()));
         logger.info("ArtifactResponse received");
         logger.info("ArtifactResponse: ");
-        OpenSAMLUtils.logSAMLObject(artifactResponse);
+        OpenSAMLUtils.logSAMLObject(response);
 
-        EncryptedAssertion encryptedAssertion = getEncryptedAssertion(artifactResponse);
-        Assertion assertion = decryptAssertion(encryptedAssertion);
-        verifyAssertionSignature(assertion);
+        Assertion assertion = response.getAssertions().get(0);
         logger.info("Decrypted Assertion: ");
         OpenSAMLUtils.logSAMLObject(assertion);
 
@@ -148,6 +155,10 @@ public class ConsumerServlet extends HttpServlet {
     }
 
     private void logAssertionAttributes(Assertion assertion) {
+        if (assertion.getAttributeStatements().size() == 0) {
+            logger.info("No attributes present in assertion");
+            return;
+        }
         for (Attribute attribute : assertion.getAttributeStatements().get(0).getAttributes()) {
             logger.info("Attribute name: " + attribute.getName());
             for (XMLObject attributeValue : attribute.getAttributeValues()) {

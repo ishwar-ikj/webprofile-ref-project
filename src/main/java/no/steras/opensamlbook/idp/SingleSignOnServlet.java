@@ -1,5 +1,9 @@
 package no.steras.opensamlbook.idp;
 
+import no.steras.opensamlbook.OpenSAMLUtils;
+import org.apache.xml.security.utils.Base64;
+import org.opensaml.core.xml.io.MarshallingException;
+import org.opensaml.saml.saml2.core.ArtifactResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -7,6 +11,7 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import javax.xml.transform.TransformerException;
 import java.io.IOException;
 import java.io.Writer;
 
@@ -29,7 +34,25 @@ public class SingleSignOnServlet extends HttpServlet {
 
     @Override
     protected void doPost(final HttpServletRequest req, final HttpServletResponse resp) throws ServletException, IOException {
-        resp.sendRedirect(ASSERTION_CONSUMER_SERVICE + "?SAMLart=AAQAAMFbLinlXaCM%2BFIxiDwGOLAy2T71gbpO7ZhNzAgEANlB90ECfpNEVLg%3D");
+        ArtifactResponse artifactResponse = new ArtifactResolutionServlet().buildArtifactResponse();
+        String encodedArtifact = null;
+        try {
+            encodedArtifact = Base64.encode(OpenSAMLUtils.encodeSAMLObject(artifactResponse).getBytes(), 0);
+        } catch (MarshallingException | TransformerException e) {
+            e.printStackTrace();
+        }
+
+        Writer w = resp.getWriter();
+        resp.setContentType("text/html");
+        w.append(
+                "<html><head></head><body><h1>Redirecting to SP</h1>" +
+                        "<form name = \"myform\" method=\"POST\" action=\"" + ASSERTION_CONSUMER_SERVICE + "\">"
+                        + "<input type=\"hidden\" name=\"SAMLResponse\" value=\"" + encodedArtifact + "\" />"
+                        + "<input type=\"submit\" value=\"Submit\"/>" + "</form>"
+                        + "<script type=\"text/javascript\">\n"
+                        + "document.myform.submit();\n"
+                        + "</script>"
+                        + "</body></html>");
     }
 
 
